@@ -1,0 +1,170 @@
+#!/usr/bin/python3
+import ctypes
+import os
+import subprocess
+import sys
+from time import sleep
+
+print("Starting init")
+# Get access to syscalls
+libc = ctypes.CDLL(None)
+syscall = libc.syscall
+
+def do_cmd(cmd):
+    """Writes commands to the init file"""
+    f = open(init_file, 'w')
+    f.write('{} '.format(cmd))
+    f.close()
+
+
+def sys_power(cmd):
+    """Issues poweroff, reboot, or halt"""
+    print('System going down now.')
+    REBOOT = 0x1234567
+    SHUTDOWN = 0x4321fedc
+    if cmd == 'poweroff' or cmd == 'halt':
+        libc.reboot(SHUTDOWN)
+    elif cmd == 'reboot':
+        libc.reboot(REBOOT)
+
+def virt_mount(type, device, dir, opts):
+    try:
+        os.mkdir(dir)
+    except:
+        pass
+    os.system('mount -t {}, {}, {} -o {}'.format(type, device, dir, opts))
+
+def get_fstab():
+    with open('/etc/fstab') as i:
+        return [
+            line for line in (
+                l.strip() for l in i
+            )
+
+            if not line.startswith('#')
+        ]
+
+
+# Static filesystem mappings
+REALFS = get_fstab()
+
+
+def init():
+
+    # Mount virtual filesystems
+    print('Mounting virtual filesystems')
+    virt_mount('proc', 'proc', '/proc', 'nosuid,noexec,nodev')
+    virt_mount('sysfs', 'sys', '/sys', 'nosuid,noexec,nodev')
+    virt_mount('tmpfs', 'run', '/run', 'mode=0755,nosuid,nodev')
+    virt_mount('devtmpfs', 'dev', '/dev', 'mode=0755,nosuid')
+    virt_mount('devpts', 'devpts', '/dev/pts', 'mode=0620,gid=5,nosuid,noexec')
+    virt_mount('tmpfs', 'shm', '/dev/shm', 'mode=1777,nosuid,nodev')
+
+    # Mount local filesystems
+    print('Mounting local filesystems')
+    for i in REALFS:
+        # Mount only filesystems that are local physical devices
+        if i.lstrip().startswith('UUID='):
+            os.system('mount {} -o remount,rw'.format(i.split()[1]))
+
+        if i.lstrip().startswith('LABEL='):
+            os.system('mount {} -o remount,rw'.format(i.split()[1]))
+        
+        if i.lstrip().startswith('/dev/'):
+            os.system('mount {} -o remount,rw'.format(i.split()[1]))
+
+    
+    # Reset init file
+    f = open('/run/initctl', 'w')  # Read only file system
+    f.close()
+    
+    
+    # Set hostname
+    print('Setting hostname')
+    try:
+        f = open('/etc/hostname', 'r')
+        hostname = f.read().rstrip()
+        f.close()
+        f = open('/proc/sys/kernel/hostname', 'w')
+        f.write(hostname)
+        f.close()
+    except:
+        #TODO Handle file not existing
+        pass
+
+
+    # Start udev daemon
+    print('Starting udev daemon')
+    os.system('/sbin/udevd --daemon')
+
+    # Trigger udev events
+    print('Triggering udev events')
+    os.system('udevadm trigger --action=add --type=subsystems')
+    os.system('udevadm trigger --action=add --type=devices')
+
+    # Wait for udev to settle
+    print('Waiting for udev uevents to be processed')
+    os.system('udevadm settle')
+
+
+    # Bring up loopback
+    print('Bringing up lo')
+    try:
+        f = open('/sys/class/net/lo', 'w')
+        f.close()
+        os.system('ip link set up dev lo')
+    except:
+        pass
+
+
+def shutdown(powerstate):
+    print('Shutting down udev')
+    os.system('udevadm control --exit')
+    print('Syncing filesystems')
+    sys_sync()
+
+    print('Remounting real filesystems RO')
+    for i in REALFS:
+        # Unmount only filesystems that are local physical devices
+        if i.lstrip().startswith('UUID='):
+            os.system('mount {} -o remount,ro'.format(i.split()[1]))
+
+        if i.lstrip().startswith('LABEL='):
+            os.system('mount {} -o remount,ro'.format(i.split()[1]))
+        
+        if i.lstrip().startswith('/dev/'):
+            os.system('mount {} -o remount,ro'.format(i.split()[1]))
+
+    print('System halting')
+    sys_power(powerstate)
+
+
+def sys_sync():
+    os.system('sync')
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        init()
+        if sys.argv[1] == 'emergency':
+            os.system('/sbin/agetty agetty tty1 --noclear --autologin root')
+    else:
+        # Start tty1
+        init()
+        try:
+            os.remove('/run/nologin')
+        except:
+            pass
+
+        subprocess.Popen(['/sbin/agetty', '--noclear', 'tty0'])
+
+        while True:
+            try:
+                f = open('/test.txt', 'r')
+                readin = f.read().strip()
+                f.close()
+                os.remove('/test.txt')
+                shutdown('halt')
+            except Exception as e:
+                sleep(1)
+

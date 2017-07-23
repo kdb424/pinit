@@ -36,7 +36,7 @@ A: http://without-systemd.org/wiki/index.php/Arguments_against_systemd
 
 Q: So I understand all of the problems there, but how can we fix them?
 
-A: I'm not always correct, but I personally believe, like many others, that we need to seperate the tools into things that are easier to maintain, and switch out. I can't switch out the init systemd if I want the service manager. You lose choice when systemd does one thing you like even though many things it does well.
+A: I'm not always correct, but I personally believe, like many others, that we need to seperate the tools into things that are easier to maintain, and switch out. I can't switch out the init systemd if I want the service manager. You lose choice when systemd does one thing you don't like even though many things it does well.
 
 Q: So we just have to re-write everything?
 
@@ -44,7 +44,7 @@ A: No. We have a lot of projects that we can fall back on. Systemd is the big hi
 
 Q: So why all of the systemd hate and a useless init system if you won't fix it?
 
-A: I wrote a refrence init system so people can understand what it is, and I am planning on writing a refrence syrvice manager in the near future.
+A: I wrote a refrence init system so people can understand what it is, and I am planning on writing a refrence service manager in the near future.
 
 
 Now that you've read through the whole Q&A, you may see why I started this. I personally love systemd's service manager. I love the config files. I hated the old init bash scripting nonsense, and think it was a great idea that just went wrong. Systemd has become hard to maintain, and has made some serious decisions that I and many others don't agree with and have tried to merge many of the tools, which tightens it's grip on the market. I propose having a new service manager that is inspired by systemd, but with new goals. It needs to not absorb everything, and needs to not be responsible for the init process. It needs to be able to not be so hard to change out, but still give us the ability to use systemd config files as close as possible (but not the 0day username issue of course). That would allow us to easy swap it out in production systems with little effort, while massively reducing the stranglehold of systemd and their abused power on the userbase. Those are the new goals for the new service manager, and it should be able to be launched from this very simple init system.

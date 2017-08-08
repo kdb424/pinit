@@ -6,9 +6,6 @@ import sys
 from time import sleep
 
 print("Starting init")
-# Get access to syscalls
-libc = ctypes.CDLL(None)
-syscall = libc.syscall
 
 def do_cmd(cmd):
     """Writes commands to the init file"""
@@ -19,6 +16,9 @@ def do_cmd(cmd):
 
 def sys_power(cmd):
     """Issues poweroff, reboot, or halt"""
+    # Get access to syscalls
+    libc = ctypes.CDLL(None)
+
     print('System going down now.')
     REBOOT = 0x1234567
     SHUTDOWN = 0x4321fedc
@@ -45,40 +45,50 @@ def get_fstab():
         ]
 
 
-# Static filesystem mappings
-REALFS = get_fstab()
-
-
 def init():
+    # Remove nologin file
+    try:
+        os.remove('/run/nologin')
+    except:
+        pass
 
     # Mount virtual filesystems
     print('Mounting virtual filesystems')
     virt_mount('proc', 'proc', '/proc', 'nosuid,noexec,nodev')
     virt_mount('sysfs', 'sys', '/sys', 'nosuid,noexec,nodev')
     virt_mount('tmpfs', 'run', '/run', 'mode=0755,nosuid,nodev')
-    virt_mount('devtmpfs', 'dev', '/dev', 'mode=0755,nosuid')
+    #virt_mount('devtmpfs', 'dev', '/dev', 'mode=0755,nosuid')
     virt_mount('devpts', 'devpts', '/dev/pts', 'mode=0620,gid=5,nosuid,noexec')
     virt_mount('tmpfs', 'shm', '/dev/shm', 'mode=1777,nosuid,nodev')
 
     # Mount local filesystems
     print('Mounting local filesystems')
-    for i in REALFS:
+    for i in get_fstab():
         # Mount only filesystems that are local physical devices
-        if i.lstrip().startswith('UUID='):
-            os.system('mount {} -o remount,rw'.format(i.split()[1]))
+        try:
+            if i.split()[1] == '/':
+                os.system('mount / -o remount,rw')
 
-        if i.lstrip().startswith('LABEL='):
-            os.system('mount {} -o remount,rw'.format(i.split()[1]))
-        
-        if i.lstrip().startswith('/dev/'):
-            os.system('mount {} -o remount,rw'.format(i.split()[1]))
+            elif i.split()[1] == 'swap':
+                os.system('swapon {}'.format(i.split()[0]))
+            else:
+                if i.lstrip().startswith('UUID='):
+                    os.system('mount {}'.format(i.split()[1]))
 
-    
+                if i.lstrip().startswith('LABEL='):
+                    os.system('mount {}'.format(i.split()[1]))
+
+                if i.lstrip().startswith('/dev/'):
+                    os.system('mount {}'.format(i.split()[1]))
+        except:
+            pass  # Comment or empty line
+
+
     # Reset init file
-    f = open('/run/initctl', 'w')  # Read only file system
+    f = open('/run/initctl', 'w')
     f.close()
-    
-    
+
+
     # Set hostname
     print('Setting hostname')
     try:
@@ -116,24 +126,53 @@ def init():
     except:
         pass
 
+    # Start service manager
+    try:
+        subprocess.Popen(['/sbin/srvmgr'], preexec_fn=os.setsid)
+
+    except:
+        print('Could not start service manager')
+
+    # Create FIFO file
+    try:
+        os.mkfifo('/tmp/initcom')
+    except OSError as e:
+        print('Failed to create FIFO: %s' % e)
+
 
 def shutdown(powerstate):
+    print('Shutting down service manager')
+    srvmgrPID = os.system('pidof srvmgr')
+    os.system('kill {}'.format(srvmgrPID))
+
     print('Shutting down udev')
     os.system('udevadm control --exit')
+
+    os.remove('/tmp/initcom')
+
     print('Syncing filesystems')
     sys_sync()
 
     print('Remounting real filesystems RO')
-    for i in REALFS:
+    for i in get_fstab():
         # Unmount only filesystems that are local physical devices
-        if i.lstrip().startswith('UUID='):
-            os.system('mount {} -o remount,ro'.format(i.split()[1]))
+        try:
+            if i.split()[1] == '/':
+                os.system('mount / -o remount,ro')
 
-        if i.lstrip().startswith('LABEL='):
-            os.system('mount {} -o remount,ro'.format(i.split()[1]))
-        
-        if i.lstrip().startswith('/dev/'):
-            os.system('mount {} -o remount,ro'.format(i.split()[1]))
+            elif i.split()[1] == 'swap':
+                os.system('swapoff {}'.format(i.split()[0]))
+            else:
+                if i.lstrip().startswith('UUID='):
+                    os.system('umount {}'.format(i.split()[1]))
+
+                if i.lstrip().startswith('LABEL='):
+                    os.system('umount {}'.format(i.split()[1]))
+
+                if i.lstrip().startswith('/dev/'):
+                    os.system('umount {}'.format(i.split()[1]))
+        except:
+            pass  # Comment or empty line
 
     print('System halting')
     sys_power(powerstate)
@@ -147,24 +186,21 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         init()
         if sys.argv[1] == 'emergency':
-            os.system('/sbin/agetty agetty tty1 --noclear --autologin root')
+            subprocess.Popen(['/sbin/agetty', '--noclear', 'tty0', '--autologin', 'root'], preexec_fn=os.setsid)
     else:
         # Start tty1
         init()
-        try:
-            os.remove('/run/nologin')
-        except:
-            pass
 
-        subprocess.Popen(['/sbin/agetty', '--noclear', 'tty0'])
+        subprocess.Popen(['/sbin/agetty', '--noclear', 'tty0'], preexec_fn=os.setsid)
 
         while True:
+            #TODO Remove this file communication nonsence. It is here for testing only
             try:
-                f = open('/test.txt', 'r')
+                f = open('/tmp/initcom', 'r')
                 readin = f.read().strip()
                 f.close()
-                os.remove('/test.txt')
-                shutdown('halt')
+                if readin == 'halt' or readin == 'reboot' or readin == 'poweroff':
+                    shutdown(readin)
             except Exception as e:
                 sleep(1)
 
